@@ -16,6 +16,9 @@
 #include "err.h"
 
 // Following three functions are copied from MIMUW course.
+// `read_port`, `get_server_address` are overloaded to to use with cpp stings.
+
+uint16_t read_port(const std::string &str) { return read_port(str.c_str()); }
 
 uint16_t read_port(char const *str) {
   char *endptr;
@@ -60,10 +63,10 @@ struct sockaddr_in get_server_address(char const *host, uint16_t port) {
 
   struct sockaddr_in send_address;
   memset(&send_address, 0, sizeof(send_address));
-  send_address.sin_family = AF_INET; 
-  send_address.sin_addr.s_addr =    
+  send_address.sin_family = AF_INET;
+  send_address.sin_addr.s_addr =
       ((struct sockaddr_in *)(address_result->ai_addr))->sin_addr.s_addr;
-  send_address.sin_port = htons(port); 
+  send_address.sin_port = htons(port);
 
   freeaddrinfo(address_result);
 
