@@ -1,15 +1,11 @@
 #ifndef SIK_RADIO_CLIENT_H
 #define SIK_RADIO_CLIENT_H
 
-#include <string>
-#include <cinttypes>
 #include "common.h"
+#include <cinttypes>
+#include <string>
 
-enum struct IpVersion {
-  AUTO,
-  IPV4,
-  IPV6
-};
+enum struct IpVersion { AUTO, IPV4, IPV6 };
 
 struct ClientConfig {
   ParsedUrl url;
@@ -20,17 +16,20 @@ struct ClientConfig {
 };
 
 class SikClient {
-public: 
+public:
   SikClient(const ClientConfig &config);
   ~SikClient();
 
   void run();
 
-private: 
-  ParsedUrl parse_url(const std::string& url);
-
+private:
+  // Creates socket, binds and connects to given server address, with respect
+  // to its config. Returns `socket_fd`;
+  void connect_to_server(const std::string &host, uint16_t port,
+                         IpVersion ip_version);
 
   ClientConfig config;
+  int socket_fd;
 };
 
 #endif

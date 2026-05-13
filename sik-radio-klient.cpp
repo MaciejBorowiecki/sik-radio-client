@@ -152,7 +152,7 @@ ClientConfig handle_arguments(int argc, char *argv[]) {
 int main(int argc, char *argv[]) {
   ClientConfig config = handle_arguments(argc, argv);
 
-  std::cout << "URL (-u):" << config.url << "\n";
+  // std::cout << "URL (-u):" << config.url. << "\n";
   std::cout << "Multiplexing (-m): " << (config.multiplexing ? "Yes" : "No") << "\n";
   std::cout << "Timeout (-t): " << config.timeout << " ms\n";
   std::cout << "Verbosity (-v): " << (int)config.verbosity << "\n";
