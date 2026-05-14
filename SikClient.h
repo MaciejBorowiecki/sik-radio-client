@@ -28,6 +28,10 @@ private:
   void connect_to_server(const std::string &host, uint16_t port,
                          IpVersion ip_version);
 
+  // Sends GET request to the server. Fails with `fatal` or `syserr` when write
+  // error occurs.
+  void send_request();
+
   ClientConfig config;
   int socket_fd;
 };

@@ -4,6 +4,7 @@
 #include <string>
 #include <sys/socket.h>
 #include <sys/types.h>
+#include <system_error>
 #include <unistd.h>
 
 #include "SikClient.h"
@@ -54,5 +55,24 @@ void SikClient::connect_to_server(const std::string &host, uint16_t port,
 
   if (rp == nullptr) {
     fatal("Could not connect to the server.");
+  }
+}
+
+void SikClient::send_request() {
+  std::string request = "";
+  request += "GET " + config.url.path + " HTTP/1.1\r\n";
+  request += "Host: " + config.url.host + "\r\n";
+  request += "Connection: Keep-Alive\r\n";
+
+  if(config.multiplexing) {
+    request += "Icy-MetaData: 1\r\n";
+  }
+  request += "\r\n";
+
+  ssize_t written_length = writen(socket_fd, request);
+  if(written_length < 0) {
+    syserr("written");
+  } else if (written_length != request.size()){
+    fatal("incomplete writen");
   }
 }
