@@ -60,6 +60,9 @@ private:
   bool read_metadata_length();
   bool extract_metadata();
 
+  // Helper function for clearing buffer and buffer state before reconnecting.
+  void clear_buffer_and_state();
+
   ClientConfig config;
   int socket_fd;
   CircularBuffer buffer;

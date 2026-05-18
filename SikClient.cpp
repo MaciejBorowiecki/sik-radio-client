@@ -59,12 +59,28 @@ void SikClient::run() {
       if (!finish && (poll_descriptors[USER_INPUT_POLL_IDX].revents & POLLIN)) {
         handle_user_input();
       }
+    } else if (poll_status == 0) {
+      close(socket_fd);
+      clear_buffer_and_state();
+
+      connect_to_server(config.url.host, config.url.port, config.ip_version);
+      send_request();
+
+      poll_descriptors[RADIO_POLL_IDX].fd = socket_fd;
     }
   } while (!finish);
 
   if (poll_descriptors[RADIO_POLL_IDX].fd >= 0) {
     close(poll_descriptors[RADIO_POLL_IDX].fd);
   }
+}
+
+void SikClient::clear_buffer_and_state() {
+  buffer.clear();
+  current_state = RadioState::READING_HEADERS;
+  bytes_until_meta = 0;
+  current_metadata_length = 0;
+  icy_metaint = 0;
 }
 
 void SikClient::handle_radio_data() {
@@ -175,7 +191,7 @@ bool SikClient::extract_music() {
   size_t read_bytes = buffer.read(temp, to_read);
 
   if (write(STDOUT_FILENO, temp, read_bytes) < 0) {
-    syserr("write to stderr failure");
+    syserr("write to stdout failure");
   }
 
   if (config.multiplexing && icy_metaint > 0) {
@@ -197,7 +213,7 @@ bool SikClient::read_metadata_length() {
   uint8_t length_byte;
   buffer.read(&length_byte, 1);
 
-  current_metadata_length = length_byte * 16; 
+  current_metadata_length = length_byte * 16;
 
   if (current_metadata_length > 0) {
     current_state = RadioState::READING_METADATA;
