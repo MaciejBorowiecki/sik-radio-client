@@ -15,8 +15,8 @@
 #include "common.h"
 #include "err.h"
 
-// Following two functions are copied from MIMUW course.
-// `read_port` is overloaded to use with `cpp` strings.
+// Following three functions are copied from MIMUW course.
+// `read_port` and writen are overloaded to use with `cpp` strings.
 
 uint16_t read_port(const std::string &str) { return read_port(str.c_str()); }
 
