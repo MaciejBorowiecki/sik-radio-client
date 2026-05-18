@@ -28,6 +28,9 @@ public:
   // Finds and copies the first line ending with newline to the `line` argument.
   // In case of no such line returns `false`.
   bool read_line(std::string &line);
+  
+  // Reset buffer state.
+  void clear();
 
 private:
   std::vector<uint8_t> buffer;

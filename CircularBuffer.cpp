@@ -65,32 +65,38 @@ bool CircularBuffer::read_line(std::string &line) {
   size_t line_length = 0;
   bool newline_found = false;
 
-  for(size_t i = 0; i < available; i++) {
+  for (size_t i = 0; i < available; i++) {
     size_t real_index = (tail + i) % capacity;
     line_length++;
-    if(buffer[real_index] == '\n') {
+    if (buffer[real_index] == '\n') {
       newline_found = true;
       break;
     }
   }
-  
-  if(!newline_found){
+
+  if (!newline_found) {
     return false;
   }
 
-  // Use CircularBuffer::read to copy data to `line` as it uses memcpy and 
+  // Use CircularBuffer::read to copy data to `line` as it uses memcpy and
   // moves `tail` pointer.
   line.resize(line_length);
   this->read(&(line[0]), line_length);
-  
+
   // We look for the first occurrence of the newline character so we need to
   // do the following operations only once.
-  if(!line.empty() && line.back() == '\n') {
+  if (!line.empty() && line.back() == '\n') {
     line.pop_back();
   }
-  if(!line.empty() && line.back() == '\r') {
+  if (!line.empty() && line.back() == '\r') {
     line.pop_back();
   }
 
   return true;
+}
+
+void CircularBuffer::clear() {
+  head = 0;
+  tail = 0;
+  current_size = 0;
 }
