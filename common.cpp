@@ -44,3 +44,27 @@ void install_signal_handler(int signal, void (*handler)(int), int flags) {
   }
 }
 
+// Write n bytes to a descriptor.
+ssize_t writen(int fd, const void *vptr, size_t n) {
+    ssize_t nleft = n;
+    ssize_t nwritten;
+    
+    const char *ptr = static_cast<const char*>(vptr); 
+
+    while (nleft > 0) {
+        if ((nwritten = write(fd, ptr, nleft)) <= 0) {
+            if (nwritten < 0 && errno == EINTR) {
+                nwritten = 0; 
+            } else {
+                return -1;   
+            }
+        }
+        nleft -= nwritten;
+        ptr += nwritten;
+    }
+    return n;
+}
+
+ssize_t writen(int fd, const std::string& str) {
+    return writen(fd, str.c_str(), str.size());
+}
