@@ -151,22 +151,9 @@ ClientConfig handle_arguments(int argc, char *argv[]) {
 
 int main(int argc, char *argv[]) {
   ClientConfig config = handle_arguments(argc, argv);
+  
+  SikClient client = SikClient(config);
+  client.run();
 
-  // std::cout << "URL (-u):" << config.url. << "\n";
-  std::cout << "Multiplexing (-m): " << (config.multiplexing ? "Yes" : "No") << "\n";
-  std::cout << "Timeout (-t): " << config.timeout << " ms\n";
-  std::cout << "Verbosity (-v): " << (int)config.verbosity << "\n";
-
-  std::cout << "IP Version (-4 / -6): ";
-  switch (config.ip_version) {
-      case IpVersion::IPV4:
-          std::cout << "IPv4\n";
-          break;
-      case IpVersion::IPV6:
-          std::cout << "IPv6\n";
-          break;
-      case IpVersion::AUTO:
-          std::cout << "AUTO\n";
-          break;
-  }
+  return 0;
 }
