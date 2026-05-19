@@ -4,6 +4,8 @@
 #include <cstdint>
 #include <string>
 
+#define DEFAULT_PORT_HTTP 80
+#define DEFAULT_PORT_HTTPS 443
 #define BYTE_SIZE 8
 
 struct ParsedUrl {
@@ -14,11 +16,14 @@ struct ParsedUrl {
 };
 
 uint16_t read_port(char const *str);
-uint16_t read_port(const std::string& str);
+uint16_t read_port(const std::string &str);
 void install_signal_handler(int signal, void (*handler)(int), int flags);
-struct sockaddr_in get_server_address(std::string const& host, uint16_t port);
+struct sockaddr_in get_server_address(std::string const &host, uint16_t port);
 struct sockaddr_in get_server_address(char const *host, uint16_t port);
 ssize_t writen(int fd, const void *vptr, size_t n);
-ssize_t writen(int fd, const std::string& str);
+ssize_t writen(int fd, const std::string &str);
+ParsedUrl parse_url(const std::string &url);
+unsigned long ulong_from_str(int min_val, int max_val, const char *num_type,
+                             const char *str);
 
 #endif
