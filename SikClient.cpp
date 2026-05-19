@@ -19,9 +19,20 @@
 #define USER_INPUT_POLL_IDX 1
 
 SikClient::SikClient(const ClientConfig &cfg)
-    : config(cfg), buffer(BUFFER_SIZE), finish(0) {}
+    : config(cfg), buffer(BUFFER_SIZE), finish(0) {
+  ctx = SSL_CTX_new(TLS_client_method());
+  SSL_CTX_set_verify(ctx, SSL_VERIFY_NONE, NULL);
+}
 
-SikClient::~SikClient() {}
+SikClient::~SikClient() {
+  if (ssl) {
+    SSL_shutdown(ssl);
+    SSL_free(ssl);
+  }
+  if (ctx) {
+    SSL_CTX_free(ctx);
+  }
+}
 
 void SikClient::run() {
   connect_to_server(config.url.host, config.url.port, config.ip_version);
@@ -42,7 +53,8 @@ void SikClient::run() {
       poll_descriptors[i].revents = 0;
     }
 
-    // TODO: reconnecting to the server.
+    // TODO: Czy config.timeout działa tutaj poprawnie, tj cyz nie może się
+    // zresetowac przy czymś innym przypadkiem
     int poll_status = poll(poll_descriptors, CONNECTIONS, config.timeout);
 
     if (poll_status == -1) {
@@ -60,6 +72,12 @@ void SikClient::run() {
         handle_user_input();
       }
     } else if (poll_status == 0) {
+      // Reconnecting to the server.
+      if (ssl) {
+        SSL_shutdown(ssl);
+        SSL_free(ssl);
+        ssl = nullptr;
+      }
       close(socket_fd);
       clear_buffer_and_state();
 
@@ -83,26 +101,44 @@ void SikClient::clear_buffer_and_state() {
   icy_metaint = 0;
 }
 
-void SikClient::handle_radio_data() {
-  uint8_t temp_buff[TEMP_BUFFER_SIZE];
-
-  size_t space_left = buffer.size_writeable();
-
-  size_t bytes_to_read = std::min(sizeof(temp_buff), space_left);
-
-  ssize_t received = read(socket_fd, temp_buff, bytes_to_read);
-
-  if (received < 0) {
-    syserr("read error from radio");
-  } else if (received == 0) {
-    // Server closed the connection.
-    finish = 1;
-    return;
+ssize_t SikClient::read_data(void *buf, size_t len) {
+  if (config.url.is_ssl) {
+    return SSL_read(ssl, buf, len);
   }
+  return read(socket_fd, buf, len);
+}
 
-  buffer.write(temp_buff, received);
+ssize_t SikClient::write_data(const std::string &str) {
+  if (config.url.is_ssl) {
+    return SSL_write(ssl, str.c_str(), str.size());
+  }
+  return writen(socket_fd, str);
+}
 
-  process_buffer();
+void SikClient::handle_radio_data() {
+  // This needs to be in do-while loop for SSL_read to correctly read whole
+  // package.
+  do {
+    uint8_t temp_buff[TEMP_BUFFER_SIZE];
+
+    size_t space_left = buffer.size_writeable();
+
+    size_t bytes_to_read = std::min(sizeof(temp_buff), space_left);
+
+    ssize_t received = read_data(temp_buff, bytes_to_read);
+
+    if (received < 0) {
+      syserr("read error from radio");
+    } else if (received == 0) {
+      // Server closed the connection.
+      finish = 1;
+      return;
+    }
+
+    buffer.write(temp_buff, received);
+
+    process_buffer();
+  } while (config.url.is_ssl && SSL_pending(ssl) > 0);
 }
 
 void SikClient::handle_user_input() {
@@ -213,6 +249,11 @@ bool SikClient::read_metadata_length() {
   uint8_t length_byte;
   buffer.read(&length_byte, 1);
 
+  // ICY/Shoutcast metadata:
+  // first byte = metadata length / 16
+  // actual length is: length_byte * 16
+  // Ref:
+  // https://stackoverflow.com/questions/14540380/title-of-current-icecast-streamed-song
   current_metadata_length = length_byte * 16;
 
   if (current_metadata_length > 0) {
@@ -282,6 +323,17 @@ void SikClient::connect_to_server(const std::string &host, uint16_t port,
   if (rp == nullptr) {
     fatal("Could not connect to the server.");
   }
+
+  if (config.url.is_ssl) {
+    ssl = SSL_new(ctx);
+    SSL_set_fd(ssl, socket_fd);
+    SSL_set_tlsext_host_name(ssl, config.url.host.c_str());
+
+    if (SSL_connect(ssl) <= 0) {
+      ERR_print_errors_fp(stderr);
+      fatal("SSL handshake failed");
+    }
+  }
 }
 
 void SikClient::send_request() {
@@ -295,7 +347,7 @@ void SikClient::send_request() {
   }
   request += "\r\n";
 
-  ssize_t written_length = writen(socket_fd, request);
+  ssize_t written_length = write_data(request);
   if (written_length < 0) {
     syserr("written");
   } else if (written_length != request.size()) {

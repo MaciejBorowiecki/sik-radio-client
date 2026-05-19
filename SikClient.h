@@ -5,6 +5,8 @@
 #include <poll.h>
 #include <string>
 #include <signal.h>
+#include <openssl/ssl.h>
+#include <openssl/err.h>
 
 #include "CircularBuffer.h"
 #include "common.h"
@@ -63,17 +65,24 @@ private:
   // Helper function for clearing buffer and buffer state before reconnecting.
   void clear_buffer_and_state();
 
+  // Wrappers for ssl - no ssl read and write operations.
+  ssize_t read_data(void *buf, size_t len);
+  ssize_t write_data(const std::string &str);
+
   ClientConfig config;
   int socket_fd;
   CircularBuffer buffer;
 
-  // TODO: czy to powinein być atomic na pewno?
+  // TODO: czy to powinien być atomic na pewno?
   volatile sig_atomic_t finish; // Flag for graceful shutdown.
  
   RadioState current_state = RadioState::READING_HEADERS; // Buffer state.
   size_t current_metadata_length = 0;
   size_t bytes_until_meta = 0; // Till the next metadata.
   size_t icy_metaint = 0;
+
+  SSL_CTX *ctx = nullptr;
+  SSL *ssl = nullptr;
 };
 
 #endif
