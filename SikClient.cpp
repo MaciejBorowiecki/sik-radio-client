@@ -1,4 +1,5 @@
 #include <algorithm>
+#include <chrono>
 #include <cstring>
 #include <netdb.h>
 #include <poll.h>
@@ -47,15 +48,21 @@ void SikClient::run() {
   poll_descriptors[USER_INPUT_POLL_IDX].fd = STDIN_FILENO;
   poll_descriptors[USER_INPUT_POLL_IDX].events = POLLIN;
 
+  auto last_radio_data_time = std::chrono::steady_clock::now();
   do {
     // Cleaning `poll_descriptors` array.
     for (int i = 0; i < CONNECTIONS; i++) {
       poll_descriptors[i].revents = 0;
     }
 
-    // TODO: Czy config.timeout działa tutaj poprawnie, tj cyz nie może się
-    // zresetowac przy czymś innym przypadkiem
-    int poll_status = poll(poll_descriptors, CONNECTIONS, config.timeout);
+    auto now = std::chrono::steady_clock::now();
+    int elapsed_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                         now - last_radio_data_time)
+                         .count();
+
+    int current_timeout = std::max(0, config.timeout - elapsed_ms);
+
+    int poll_status = poll(poll_descriptors, CONNECTIONS, current_timeout);
 
     if (poll_status == -1) {
       // TODO: POLLERR?
@@ -66,13 +73,17 @@ void SikClient::run() {
       }
     } else if (poll_status > 0) {
       if (!finish && (poll_descriptors[RADIO_POLL_IDX].revents & POLLIN)) {
+        last_radio_data_time = std::chrono::steady_clock::now();
+
         handle_radio_data();
-        if(current_state == RadioState::REDIRECTING) {
+        if (current_state == RadioState::REDIRECTING) {
           config.url = parse_url(redirect_url);
           redirect_url = "";
           reconnect();
           send_request();
           poll_descriptors[RADIO_POLL_IDX].fd = socket_fd;
+
+          last_radio_data_time = std::chrono::steady_clock::now();
         }
       }
       if (!finish && (poll_descriptors[USER_INPUT_POLL_IDX].revents & POLLIN)) {
@@ -81,10 +92,19 @@ void SikClient::run() {
     } else if (poll_status == 0) {
       reconnect();
       send_request();
-
       poll_descriptors[RADIO_POLL_IDX].fd = socket_fd;
+
+      last_radio_data_time = std::chrono::steady_clock::now();
     }
   } while (!finish);
+
+  // Write what is left in buffer (graceful shutdown).
+  // TODO: is ignoring metadata here okay?
+  while (buffer.size_readable() > 0) {
+    uint8_t temp[TEMP_BUFFER_SIZE];
+    size_t read_bytes = buffer.read(temp, sizeof(temp));
+    writen(STDOUT_FILENO, temp, read_bytes);
+  }
 
   if (poll_descriptors[RADIO_POLL_IDX].fd >= 0) {
     close(poll_descriptors[RADIO_POLL_IDX].fd);
@@ -103,11 +123,11 @@ void SikClient::reconnect() {
   }
 
   clear_buffer_and_state();
-  
+
   connect_to_server(config.url.host, config.url.port, config.ip_version);
   send_request();
 }
-  
+
 void SikClient::clear_buffer_and_state() {
   buffer.clear();
   current_state = RadioState::READING_HEADERS;
@@ -161,7 +181,6 @@ void SikClient::handle_user_input() {
 
   // Leave one character for end of string ('\0').
   ssize_t received = read(STDIN_FILENO, temp_buff, sizeof(temp_buff) - 1);
-
 
   if (received > 0) {
     temp_buff[received] = '\0';
