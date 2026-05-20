@@ -68,6 +68,8 @@ void SikClient::run() {
       if (!finish && (poll_descriptors[RADIO_POLL_IDX].revents & POLLIN)) {
         handle_radio_data();
         if(current_state == RadioState::REDIRECTING) {
+          config.url = parse_url(redirect_url);
+          redirect_url = "";
           reconnect();
           send_request();
           poll_descriptors[RADIO_POLL_IDX].fd = socket_fd;
