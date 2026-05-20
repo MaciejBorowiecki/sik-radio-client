@@ -162,10 +162,12 @@ void SikClient::handle_user_input() {
   // Leave one character for end of string ('\0').
   ssize_t received = read(STDIN_FILENO, temp_buff, sizeof(temp_buff) - 1);
 
+
   if (received > 0) {
     temp_buff[received] = '\0';
-    std::string quit = "quit";
-    if (std::strncmp(temp_buff, quit.c_str(), quit.size()) == 0) {
+
+    std::string input(temp_buff);
+    if (input == "quit\n" || input == "quit\r\n") {
       finish = 1;
     }
   }
