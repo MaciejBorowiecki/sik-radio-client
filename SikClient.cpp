@@ -67,21 +67,17 @@ void SikClient::run() {
     } else if (poll_status > 0) {
       if (!finish && (poll_descriptors[RADIO_POLL_IDX].revents & POLLIN)) {
         handle_radio_data();
+        if(current_state == RadioState::REDIRECTING) {
+          reconnect();
+          send_request();
+          poll_descriptors[RADIO_POLL_IDX].fd = socket_fd;
+        }
       }
       if (!finish && (poll_descriptors[USER_INPUT_POLL_IDX].revents & POLLIN)) {
         handle_user_input();
       }
     } else if (poll_status == 0) {
-      // Reconnecting to the server.
-      if (ssl) {
-        SSL_shutdown(ssl);
-        SSL_free(ssl);
-        ssl = nullptr;
-      }
-      close(socket_fd);
-      clear_buffer_and_state();
-
-      connect_to_server(config.url.host, config.url.port, config.ip_version);
+      reconnect();
       send_request();
 
       poll_descriptors[RADIO_POLL_IDX].fd = socket_fd;
@@ -93,6 +89,23 @@ void SikClient::run() {
   }
 }
 
+void SikClient::reconnect() {
+  if (ssl) {
+    SSL_shutdown(ssl);
+    SSL_free(ssl);
+    ssl = nullptr;
+  }
+  if (socket_fd >= 0) {
+    close(socket_fd);
+    socket_fd = -1;
+  }
+
+  clear_buffer_and_state();
+  
+  connect_to_server(config.url.host, config.url.port, config.ip_version);
+  send_request();
+}
+  
 void SikClient::clear_buffer_and_state() {
   buffer.clear();
   current_state = RadioState::READING_HEADERS;
@@ -186,14 +199,27 @@ bool SikClient::process_headers() {
 
     // Empty line - end of headers.
     if (line == "\r" || line == "") {
-      current_state = RadioState::PLAYING_MUSIC;
-      bytes_until_meta = icy_metaint;
+      if (!redirect_url.empty()) {
+        current_state = RadioState::REDIRECTING;
+      } else {
+        current_state = RadioState::PLAYING_MUSIC;
+        bytes_until_meta = icy_metaint;
+      }
       return true;
     }
 
     std::string lower_line = line;
     std::transform(lower_line.begin(), lower_line.end(), lower_line.begin(),
                    ::tolower);
+
+    // HTTP 302
+    std::string search_loc = "location: ";
+    if (lower_line.find(search_loc) == 0) {
+      redirect_url = line.substr(search_loc.length());
+      if (!redirect_url.empty() && redirect_url.back() == '\r') {
+        redirect_url.pop_back();
+      }
+    }
 
     std::string search_key = "icy-metaint:";
     size_t pos = lower_line.find(search_key);

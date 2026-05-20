@@ -17,7 +17,8 @@ enum struct RadioState {
   READING_HEADERS,
   PLAYING_MUSIC,
   READING_METADATA_LENGTH,
-  READING_METADATA
+  READING_METADATA,
+  REDIRECTING
 };
 
 struct ClientConfig {
@@ -65,6 +66,8 @@ private:
   // Helper function for clearing buffer and buffer state before reconnecting.
   void clear_buffer_and_state();
 
+  void reconnect();
+
   // Wrappers for ssl - no ssl read and write operations.
   ssize_t read_data(void *buf, size_t len);
   ssize_t write_data(const std::string &str);
@@ -83,6 +86,8 @@ private:
 
   SSL_CTX *ctx = nullptr;
   SSL *ssl = nullptr;
+
+  std::string redirect_url = "";
 };
 
 #endif
