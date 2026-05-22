@@ -88,6 +88,7 @@ private:
   SSL *ssl = nullptr;
 
   std::string redirect_url = "";
+  std::string session_cookie = "";
 };
 
 #endif

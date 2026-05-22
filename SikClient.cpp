@@ -2,10 +2,10 @@
 #include <arpa/inet.h>
 #include <chrono>
 #include <cstring>
+#include <ctime>
 #include <netdb.h>
 #include <poll.h>
 #include <string>
-#include <ctime>
 #include <sys/socket.h>
 #include <sys/types.h>
 #include <unistd.h>
@@ -241,7 +241,6 @@ bool SikClient::process_headers() {
       }
       return true;
     }
-
     std::string lower_line = line;
     std::transform(lower_line.begin(), lower_line.end(), lower_line.begin(),
                    ::tolower);
@@ -252,6 +251,22 @@ bool SikClient::process_headers() {
       redirect_url = line.substr(search_loc.length());
       if (!redirect_url.empty() && redirect_url.back() == '\r') {
         redirect_url.pop_back();
+      }
+    }
+
+    std::string search_cookie = "set-cookie: ";
+    if (lower_line.find(search_cookie) == 0) {
+      std::string cookie_val = line.substr(search_cookie.length());
+
+      size_t semicolon_pos = cookie_val.find(';');
+      if (semicolon_pos != std::string::npos) {
+        session_cookie = cookie_val.substr(0, semicolon_pos);
+      } else {
+        session_cookie = cookie_val;
+      }
+
+      if (!session_cookie.empty() && session_cookie.back() == '\r') {
+        session_cookie.pop_back();
       }
     }
 
@@ -431,6 +446,10 @@ void SikClient::send_request() {
   request += "GET " + config.url.path + " HTTP/1.1\r\n";
   request += "Host: " + config.url.host + "\r\n";
   request += "Connection: Keep-Alive\r\n";
+
+  if (!session_cookie.empty()) {
+    request += "Cookie: " + session_cookie + "\r\n";
+  }
 
   if (config.multiplexing) {
     request += "Icy-MetaData: 1\r\n";
