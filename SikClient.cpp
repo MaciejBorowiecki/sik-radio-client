@@ -1,9 +1,11 @@
 #include <algorithm>
+#include <arpa/inet.h>
 #include <chrono>
 #include <cstring>
 #include <netdb.h>
 #include <poll.h>
 #include <string>
+#include <ctime>
 #include <sys/socket.h>
 #include <sys/types.h>
 #include <unistd.h>
@@ -67,9 +69,9 @@ void SikClient::run() {
     if (poll_status == -1) {
       // TODO: POLLERR?
       if (errno == EINTR) {
-        printf("interrupted system call\n");
+        error(config.verbosity, "Poll interrupted");
       } else {
-        syserr("poll");
+        syserr(config.verbosity, "poll");
       }
     } else if (poll_status > 0) {
       if (!finish && (poll_descriptors[RADIO_POLL_IDX].revents & POLLIN)) {
@@ -77,7 +79,9 @@ void SikClient::run() {
 
         handle_radio_data();
         if (current_state == RadioState::REDIRECTING) {
-          config.url = parse_url(redirect_url);
+          log_info(config.verbosity, 1, "Got redirected to the adress: %s\n",
+                   redirect_url.c_str());
+          config.url = parse_url(redirect_url, config.verbosity);
           redirect_url = "";
           reconnect();
           send_request();
@@ -90,6 +94,8 @@ void SikClient::run() {
         handle_user_input();
       }
     } else if (poll_status == 0) {
+      log_info(config.verbosity, 1,
+               "Time limit exceeded, trying to reconnect...\n");
       reconnect();
       send_request();
       poll_descriptors[RADIO_POLL_IDX].fd = socket_fd;
@@ -163,11 +169,15 @@ void SikClient::handle_radio_data() {
     ssize_t received = read_data(temp_buff, bytes_to_read);
 
     if (received < 0) {
-      syserr("read error from radio");
+      syserr(config.verbosity, "read error from radio");
     } else if (received == 0) {
+      log_info(config.verbosity, 1, "Server closed the connection.\n");
       // Server closed the connection.
       finish = 1;
       return;
+    } else {
+      log_info(config.verbosity, 4, "Read %zd bytes from the socket.\n",
+               received);
     }
 
     buffer.write(temp_buff, received);
@@ -219,6 +229,7 @@ bool SikClient::process_headers() {
   std::string line;
 
   while (buffer.read_line(line)) {
+    log_info(config.verbosity, 1, "%s\n", line.c_str());
 
     // Empty line - end of headers.
     if (line == "\r" || line == "") {
@@ -275,8 +286,8 @@ bool SikClient::extract_music() {
 
   size_t read_bytes = buffer.read(temp, to_read);
 
-  if (write(STDOUT_FILENO, temp, read_bytes) < 0) {
-    syserr("write to stdout failure");
+  if (writen(STDOUT_FILENO, temp, read_bytes) < 0) {
+    syserr(config.verbosity, "write to stdout failure");
   }
 
   if (config.multiplexing && icy_metaint > 0) {
@@ -324,15 +335,26 @@ bool SikClient::extract_metadata() {
   meta_str.resize(current_metadata_length);
   buffer.read(&meta_str[0], current_metadata_length);
 
-  fprintf(stderr, "%s\n", meta_str.c_str());
+  fwrite(meta_str.data(), 1, current_metadata_length, stderr);
+  fprintf(stderr, "\n");
 
   current_state = RadioState::PLAYING_MUSIC;
   bytes_until_meta = icy_metaint;
   return true;
 }
 
+// TODO: refactor to make this shorter.
 void SikClient::connect_to_server(const std::string &host, uint16_t port,
                                   IpVersion ip_version) {
+  if (config.verbosity >= 1) {
+    auto t = std::time(nullptr);
+    auto tm = *std::localtime(&t);
+    log_info(config.verbosity, 1, "%04d.%02d.%02d %02d.%02d.%02d\n",
+             tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday, tm.tm_hour,
+             tm.tm_min, tm.tm_sec);
+  }
+  log_info(config.verbosity, 1, "resolving name %s\n", host.c_str());
+
   struct addrinfo hints;
   memset(&hints, 0, sizeof(struct addrinfo));
   hints.ai_socktype = SOCK_STREAM;
@@ -350,7 +372,7 @@ void SikClient::connect_to_server(const std::string &host, uint16_t port,
   std::string port_str = std::to_string(port);
   int errcode = getaddrinfo(host.c_str(), port_str.c_str(), &hints, &result);
   if (errcode != 0) {
-    fatal("getaddrinfo: %s", gai_strerror(errcode));
+    fatal(config.verbosity, "getaddrinfo: %s", gai_strerror(errcode));
   }
 
   socket_fd = -1;
@@ -360,17 +382,36 @@ void SikClient::connect_to_server(const std::string &host, uint16_t port,
       continue;
     }
 
+    // log info
+    char ip_str[INET6_ADDRSTRLEN];
+    void *addr;
+    if (rp->ai_family == AF_INET) {
+      addr = &((struct sockaddr_in *)rp->ai_addr)->sin_addr;
+    } else {
+      addr = &((struct sockaddr_in6 *)rp->ai_addr)->sin6_addr;
+    }
+    inet_ntop(rp->ai_family, addr, ip_str, sizeof(ip_str));
+
+    if (rp->ai_family == AF_INET6) {
+      log_info(config.verbosity, 1, "connecting to server [%s]:%d\n", ip_str,
+               port);
+    } else {
+      log_info(config.verbosity, 1, "connecting to server %s:%d\n", ip_str,
+               port);
+    }
     if (connect(socket_fd, rp->ai_addr, rp->ai_addrlen) != -1) {
       break;
     }
 
+    error(config.verbosity,
+          "Failed to connect to one of the resolved addresses");
     close(socket_fd);
   }
 
   freeaddrinfo(result);
 
   if (rp == nullptr) {
-    fatal("Could not connect to the server.");
+    fatal(config.verbosity, "Could not connect to the server.");
   }
 
   if (config.url.is_ssl) {
@@ -380,7 +421,7 @@ void SikClient::connect_to_server(const std::string &host, uint16_t port,
 
     if (SSL_connect(ssl) <= 0) {
       ERR_print_errors_fp(stderr);
-      fatal("SSL handshake failed");
+      fatal(config.verbosity, "SSL handshake failed");
     }
   }
 }
@@ -398,8 +439,9 @@ void SikClient::send_request() {
 
   ssize_t written_length = write_data(request);
   if (written_length < 0) {
-    syserr("written");
+    syserr(config.verbosity, "written");
   } else if (written_length != request.size()) {
-    fatal("incomplete writen");
+    fatal(config.verbosity, "incomplete writen");
   }
+  log_info(config.verbosity, 1, "%s", request.c_str());
 }

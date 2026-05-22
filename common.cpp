@@ -3,6 +3,7 @@
 #include <limits.h>
 #include <netdb.h>
 #include <signal.h>
+#include <stdarg.h>
 #include <stddef.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -18,19 +19,22 @@
 // Following three functions are copied from MIMUW course.
 // `read_port` and writen are overloaded to use with `cpp` strings.
 
-uint16_t read_port(const std::string &str) { return read_port(str.c_str()); }
+uint16_t read_port(const std::string &str, uint8_t verbosity) {
+  return read_port(str.c_str(), verbosity);
+}
 
-uint16_t read_port(char const *str) {
+uint16_t read_port(char const *str, uint8_t verbosity) {
   char *endptr;
   errno = 0;
   unsigned long port = strtoul(str, &endptr, 10);
   if (errno != 0 || *endptr != 0 || port > UINT16_MAX) {
-    fatal("%s is not a valid port number", str);
+    fatal(verbosity, "%s is not a valid port number", str);
   }
   return (uint16_t)port;
 }
 
-void install_signal_handler(int signal, void (*handler)(int), int flags) {
+void install_signal_handler(int signal, void (*handler)(int), int flags,
+                            uint8_t verbosity) {
   struct sigaction action;
   sigset_t block_mask;
 
@@ -40,54 +44,54 @@ void install_signal_handler(int signal, void (*handler)(int), int flags) {
   action.sa_flags = flags;
 
   if (sigaction(signal, &action, NULL) < 0) {
-    syserr("sigaction");
+    syserr(verbosity, "sigaction");
   }
 }
 
 // Write n bytes to a descriptor.
 ssize_t writen(int fd, const void *vptr, size_t n) {
-    ssize_t nleft = n;
-    ssize_t nwritten;
-    
-    const char *ptr = static_cast<const char*>(vptr); 
+  ssize_t nleft = n;
+  ssize_t nwritten;
 
-    while (nleft > 0) {
-        if ((nwritten = write(fd, ptr, nleft)) <= 0) {
-            if (nwritten < 0 && errno == EINTR) {
-                nwritten = 0; 
-            } else {
-                return -1;   
-            }
-        }
-        nleft -= nwritten;
-        ptr += nwritten;
+  const char *ptr = static_cast<const char *>(vptr);
+
+  while (nleft > 0) {
+    if ((nwritten = write(fd, ptr, nleft)) <= 0) {
+      if (nwritten < 0 && errno == EINTR) {
+        nwritten = 0;
+      } else {
+        return -1;
+      }
     }
-    return n;
+    nleft -= nwritten;
+    ptr += nwritten;
+  }
+  return n;
 }
 
-ssize_t writen(int fd, const std::string& str) {
-    return writen(fd, str.c_str(), str.size());
+ssize_t writen(int fd, const std::string &str) {
+  return writen(fd, str.c_str(), str.size());
 }
 
-unsigned long ulong_from_str(int min_val, int max_val, const char* num_type,
-                             const char *str) {
+unsigned long ulong_from_str(int min_val, int max_val, const char *num_type,
+                             const char *str, uint8_t verbosity) {
   char *endptr;
   unsigned long num = strtoul(str, &endptr, 10);
   if (*endptr != '\0' || num < min_val || num > max_val) {
-    fatal("%s is not a valid %s number", str, num_type);
+    fatal(verbosity, "%s is not a valid %s number", str, num_type);
   }
   return num;
 }
 
 // TODO: może zwracanie konkretniejszego info w fatal, tylko nie może być wtedy
 // w std::string lub przeciążyć w err
-ParsedUrl parse_url(const std::string &url) {
+ParsedUrl parse_url(const std::string &url, uint8_t verbosity) {
   ParsedUrl parsed_url;
   int pos;
 
   // check for :// (first anchor in url)
   if ((pos = url.find("://")) == std::string::npos) {
-    fatal("Invalid URL given.");
+    fatal(verbosity, "Invalid URL given.");
   }
 
   std::string prot = url.substr(0, pos);
@@ -99,7 +103,7 @@ ParsedUrl parse_url(const std::string &url) {
     parsed_url.is_ssl = true;
     parsed_url.port = DEFAULT_PORT_HTTPS;
   } else {
-    fatal("Invalid protocol in given URL.");
+    fatal(verbosity, "Invalid protocol in given URL.");
   }
 
   // Start of the next section of the URL is end is after "://" anchor.
@@ -115,11 +119,11 @@ ParsedUrl parse_url(const std::string &url) {
     parsed_url.host = url.substr(host_start, port_start - host_start);
 
     if (path_start == std::string::npos) {
-      parsed_url.port = read_port(url.substr(port_start + 1));
+      parsed_url.port = read_port(url.substr(port_start + 1), verbosity);
       parsed_url.path = "/";
     } else {
       parsed_url.port = read_port(
-          url.substr(port_start + 1, path_start - (port_start + 1)));
+          url.substr(port_start + 1, path_start - (port_start + 1)), verbosity);
       parsed_url.path = url.substr(path_start);
     }
   } else {
@@ -133,4 +137,14 @@ ParsedUrl parse_url(const std::string &url) {
   }
 
   return parsed_url;
+}
+
+void log_info(uint8_t current_verbosity, uint8_t target_level, const char *fmt,
+              ...) {
+  if (current_verbosity >= target_level) {
+    va_list args;
+    va_start(args, fmt);
+    vfprintf(stderr, fmt, args);
+    va_end(args);
+  }
 }

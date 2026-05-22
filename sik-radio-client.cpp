@@ -31,7 +31,7 @@ ClientConfig handle_arguments(int argc, char *argv[]) {
   while ((opt = getopt(argc, argv, "u:mt:46v:q")) != -1) {
     switch (opt) {
       case 'u':
-        config.url = parse_url(optarg);
+        config.url = parse_url(optarg, 2);
         got_url = true;
         break;
       case 'm':
@@ -39,7 +39,7 @@ ClientConfig handle_arguments(int argc, char *argv[]) {
         break;
       case 't': {
         config.timeout = (int)ulong_from_str(MIN_TIMEOUT, MAX_TIMEOUT,
-                                             "client timeout", optarg);
+                                             "client timeout", optarg, 2);
         break;
       }
       case '4': {
@@ -62,19 +62,19 @@ ClientConfig handle_arguments(int argc, char *argv[]) {
       }
       case 'v': {
         config.verbosity = (uint8_t)ulong_from_str(MIN_VERBOSITY, MAX_VERBOSITY,
-                                                   "verbosity level", optarg);
+                                                   "verbosity level", optarg, 2);
         break;
       }
       case 'q':
         config.verbosity = 0;
         break;
       default:
-        fatal("Usage: %s -u <url> [-m] [-t] <timeout> [-4] [-6] [-v] "
+        fatal(2, "Usage: %s -u <url> [-m] [-t] <timeout> [-4] [-6] [-v] "
               "<verbosity> [-q]");
     }
   }
   if (!got_url) {
-    fatal("Usage: %s -u <url> [-m] [-t] <timeout> [-4] [-6] [-v] "
+    fatal(2, "Usage: %s -u <url> [-m] [-t] <timeout> [-4] [-6] [-v] "
           "<verbosity> [-q]");
   }
 

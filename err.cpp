@@ -7,7 +7,8 @@
 
 #include "err.h"
 
-[[noreturn]] void syserr(const char* fmt, ...) {
+[[noreturn]] void syserr(uint8_t verbosity, const char *fmt, ...) {
+  if (verbosity >= 2) {
     va_list fmt_args;
     int org_errno = errno;
 
@@ -18,10 +19,12 @@
     va_end(fmt_args);
 
     fprintf(stderr, " (%d; %s)\n", org_errno, strerror(org_errno));
-    exit(1);
+  }
+  exit(1);
 }
 
-[[noreturn]] void fatal(const char* fmt, ...) {
+[[noreturn]] void fatal(uint8_t verbosity, const char *fmt, ...) {
+  if (verbosity >= 2) {
     va_list fmt_args;
 
     fprintf(stderr, "\tERROR: ");
@@ -31,10 +34,12 @@
     va_end(fmt_args);
 
     fprintf(stderr, "\n");
-    exit(1);
+  }
+  exit(1);
 }
 
-void error(const char* fmt, ...) {
+void error(uint8_t verbosity, const char *fmt, ...) {
+  if (verbosity >= 3) {
     va_list fmt_args;
     int org_errno = errno;
 
@@ -48,4 +53,5 @@ void error(const char* fmt, ...) {
       fprintf(stderr, " (%d; %s)", org_errno, strerror(org_errno));
     }
     fprintf(stderr, "\n");
+  }
 }
