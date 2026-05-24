@@ -20,6 +20,9 @@
 #define CONNECTIONS 2
 #define RADIO_POLL_IDX 0
 #define USER_INPUT_POLL_IDX 1
+#define HTTP_STATUS_SUCCESS 200
+#define HTTP_STATUS_REDIRECT_MIN 300
+#define HTTP_STATUS_REDIRECT_MAX 400
 
 SikClient::SikClient(const ClientConfig &cfg)
     : config(cfg), socket_fd(-1), buffer(BUFFER_SIZE), finish(0) {
@@ -254,13 +257,18 @@ void SikClient::process_buffer() {
 
 bool SikClient::process_headers() {
   std::string line;
+  bool status_parsed = false;
+  bool is_redirect = false;
 
   while (buffer.read_line(line)) {
     log_info(config.verbosity, 1, "%s\n", line.c_str());
 
     // Empty line - end of headers.
     if (line == "\r" || line == "") {
-      if (!redirect_url.empty()) {
+      if (is_redirect) {
+        if (redirect_url.empty()) {
+          fatal(config.verbosity, "Redirect without Location header");
+        }
         current_state = RadioState::REDIRECTING;
       } else {
         current_state = RadioState::PLAYING_MUSIC;
@@ -268,6 +276,28 @@ bool SikClient::process_headers() {
       }
       return true;
     }
+    if (!status_parsed) {
+      // Parse http code from the first line.
+      status_parsed = true;
+      size_t sp = line.find(' ');
+      if (sp == std::string::npos) {
+        fatal(config.verbosity, "Invalid HTTP response");
+      }
+      int status = 0;
+      try {
+        status = std::stoi(line.substr(sp + 1));
+      } catch (const std::exception &) {
+        fatal(config.verbosity, "Invalid HTTP status code");
+      }
+      if (status == HTTP_STATUS_SUCCESS) {
+        is_redirect = false;
+      } else if (status >= HTTP_STATUS_REDIRECT_MIN && status < HTTP_STATUS_REDIRECT_MAX) {
+        is_redirect = true;
+      } else {
+        fatal(config.verbosity, "Server returned error status: %d", status);
+      }
+    }
+
     std::string lower_line = line;
     std::transform(lower_line.begin(), lower_line.end(), lower_line.begin(),
                    ::tolower);
