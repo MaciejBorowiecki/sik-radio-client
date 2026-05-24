@@ -291,7 +291,8 @@ bool SikClient::process_headers() {
       }
       if (status == HTTP_STATUS_SUCCESS) {
         is_redirect = false;
-      } else if (status >= HTTP_STATUS_REDIRECT_MIN && status < HTTP_STATUS_REDIRECT_MAX) {
+      } else if (status >= HTTP_STATUS_REDIRECT_MIN &&
+                 status < HTTP_STATUS_REDIRECT_MAX) {
         is_redirect = true;
       } else {
         fatal(config.verbosity, "Server returned error status: %d", status);
@@ -412,11 +413,17 @@ bool SikClient::extract_metadata() {
     return false;
   }
 
-  std::string meta_str;
-  meta_str.resize(current_metadata_length);
+  std::string meta_str(current_metadata_length, '\0');
   buffer.read(&meta_str[0], current_metadata_length);
 
-  fwrite(meta_str.data(), 1, current_metadata_length, stderr);
+  // Delete metadata null padding.
+  size_t actual_len = meta_str.find('\0');
+  if (actual_len == std::string::npos)
+    actual_len = current_metadata_length;
+
+  if (actual_len > 0) {
+    fwrite(meta_str.data(), 1, actual_len, stderr);
+  }
   fprintf(stderr, "\n");
 
   current_state = RadioState::PLAYING_MUSIC;
@@ -450,7 +457,11 @@ void SikClient::connect_to_server(const std::string &host, uint16_t port,
 
   struct addrinfo *result, *rp;
   std::string port_str = std::to_string(port);
-  int errcode = getaddrinfo(host.c_str(), port_str.c_str(), &hints, &result);
+  std::string resolved_host = host;
+  if (!host.empty() && host.front() == '[' && host.back() == ']') {
+    resolved_host = host.substr(1, host.size() - 2);
+  }
+  int errcode = getaddrinfo(resolved_host.c_str(), port_str.c_str(), &hints, &result);
   if (errcode != 0) {
     fatal(config.verbosity, "getaddrinfo: %s", gai_strerror(errcode));
   }

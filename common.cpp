@@ -107,12 +107,28 @@ ParsedUrl parse_url(const std::string &url, uint8_t verbosity) {
 
   // Start of the next section of the URL is end is after "://" anchor.
   size_t host_start = pos + 3;
-  size_t path_start = url.find('/', host_start);
-  size_t port_start = url.find(':', host_start);
+  size_t path_start, port_start;
+  bool has_port;
 
-  // ':' must occur before path starts to represent port.
-  bool has_port = (port_start != std::string::npos) &&
-                  (path_start == std::string::npos || port_start < path_start);
+  if (host_start < url.size() && url[host_start] == '[') {
+    // IPv6 - [addr] or [addr]:port
+    size_t bracket_end = url.find(']', host_start);
+    if (bracket_end == std::string::npos) {
+      fatal(verbosity, "Invalid IPv6 literal in URL");
+    }
+    path_start = url.find('/', bracket_end);
+    port_start = url.find(':', bracket_end + 1);
+    has_port = (port_start != std::string::npos) &&
+               (path_start == std::string::npos || port_start < path_start);
+    parsed_url.host =
+        url.substr(host_start, bracket_end - host_start + 1);
+  } else {
+    path_start = url.find('/', host_start);
+    port_start = url.find(':', host_start);
+    has_port = (port_start != std::string::npos) &&
+               (path_start == std::string::npos || port_start < path_start);
+    parsed_url.host = "";
+  }
 
   if (has_port) {
     parsed_url.host = url.substr(host_start, port_start - host_start);
