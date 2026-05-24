@@ -303,15 +303,18 @@ bool SikClient::process_headers() {
     std::transform(lower_line.begin(), lower_line.end(), lower_line.begin(),
                    ::tolower);
 
-    // HTTP 302
+    // Redirecting.
     std::string search_loc = "location: ";
     if (lower_line.find(search_loc) == 0) {
       redirect_url = line.substr(search_loc.length());
-      if (!redirect_url.empty() && redirect_url.back() == '\r') {
-        redirect_url.pop_back();
-      }
+      size_t start = redirect_url.find_first_not_of(" \t");
+      size_t end = redirect_url.find_last_not_of(" \t\r");
+      redirect_url = (start != std::string::npos)
+                         ? redirect_url.substr(start, end - start + 1)
+                         : "";
     }
 
+    // Cookies.
     std::string search_cookie = "set-cookie: ";
     if (lower_line.find(search_cookie) == 0) {
       std::string cookie_val = line.substr(search_cookie.length());
@@ -331,6 +334,7 @@ bool SikClient::process_headers() {
       }
     }
 
+    // Metadata.
     std::string search_key = "icy-metaint:";
     size_t pos = lower_line.find(search_key);
 
@@ -461,7 +465,8 @@ void SikClient::connect_to_server(const std::string &host, uint16_t port,
   if (!host.empty() && host.front() == '[' && host.back() == ']') {
     resolved_host = host.substr(1, host.size() - 2);
   }
-  int errcode = getaddrinfo(resolved_host.c_str(), port_str.c_str(), &hints, &result);
+  int errcode =
+      getaddrinfo(resolved_host.c_str(), port_str.c_str(), &hints, &result);
   if (errcode != 0) {
     fatal(config.verbosity, "getaddrinfo: %s", gai_strerror(errcode));
   }
