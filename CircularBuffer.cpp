@@ -4,7 +4,7 @@
 #include "CircularBuffer.h"
 
 CircularBuffer::CircularBuffer(size_t size)
-    : buffer(size), head(0), tail(0), capacity(size), current_size(0) {}
+    :  buffer(size), head(0), tail(0), current_size(0), capacity(size) {}
 
 size_t CircularBuffer::write(const void *data, size_t len) {
   // Cast to uint8_t* to allow pointer arithmetic.

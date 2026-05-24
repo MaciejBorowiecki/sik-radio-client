@@ -3,6 +3,7 @@
 
 #include <cinttypes>
 #include <poll.h>
+#include <map>
 #include <string>
 #include <signal.h>
 #include <openssl/ssl.h>
@@ -76,7 +77,6 @@ private:
   int socket_fd;
   CircularBuffer buffer;
 
-  // TODO: czy to powinien być atomic na pewno?
   volatile sig_atomic_t finish; // Flag for graceful shutdown.
  
   RadioState current_state = RadioState::READING_HEADERS; // Buffer state.
@@ -88,7 +88,7 @@ private:
   SSL *ssl = nullptr;
 
   std::string redirect_url = "";
-  std::string session_cookie = "";
+  std::map<std::string, std::string> cookies;
 };
 
 #endif

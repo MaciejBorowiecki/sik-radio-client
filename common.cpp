@@ -77,17 +77,16 @@ unsigned long ulong_from_str(int min_val, int max_val, const char *num_type,
                              const char *str, uint8_t verbosity) {
   char *endptr;
   unsigned long num = strtoul(str, &endptr, 10);
-  if (*endptr != '\0' || num < min_val || num > max_val) {
+  if (*endptr != '\0' || num < static_cast<unsigned long>(min_val) ||
+      num > static_cast<unsigned long>(max_val)) {
     fatal(verbosity, "%s is not a valid %s number", str, num_type);
   }
   return num;
 }
 
-// TODO: może zwracanie konkretniejszego info w fatal, tylko nie może być wtedy
-// w std::string lub przeciążyć w err
 ParsedUrl parse_url(const std::string &url, uint8_t verbosity) {
   ParsedUrl parsed_url;
-  int pos;
+  size_t pos;
 
   // check for :// (first anchor in url)
   if ((pos = url.find("://")) == std::string::npos) {

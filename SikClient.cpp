@@ -22,7 +22,7 @@
 #define USER_INPUT_POLL_IDX 1
 
 SikClient::SikClient(const ClientConfig &cfg)
-    : config(cfg), buffer(BUFFER_SIZE), finish(0) {
+    : config(cfg), socket_fd(-1), buffer(BUFFER_SIZE), finish(0) {
   ctx = SSL_CTX_new(TLS_client_method());
   SSL_CTX_set_verify(ctx, SSL_VERIFY_NONE, NULL);
 }
@@ -34,6 +34,9 @@ SikClient::~SikClient() {
   }
   if (ctx) {
     SSL_CTX_free(ctx);
+  }
+  if (socket_fd >= 0) {
+    close(socket_fd);
   }
 }
 
@@ -67,35 +70,42 @@ void SikClient::run() {
     int poll_status = poll(poll_descriptors, CONNECTIONS, current_timeout);
 
     if (poll_status == -1) {
-      // TODO: POLLERR?
       if (errno == EINTR) {
         error(config.verbosity, "Poll interrupted");
       } else {
         syserr(config.verbosity, "poll");
       }
     } else if (poll_status > 0) {
-      if (!finish && (poll_descriptors[RADIO_POLL_IDX].revents & POLLIN)) {
-        last_radio_data_time = std::chrono::steady_clock::now();
-
-        handle_radio_data();
-        if (current_state == RadioState::REDIRECTING) {
-          log_info(config.verbosity, 1, "Got redirected to the adress: %s\n",
-                   redirect_url.c_str());
-          config.url = parse_url(redirect_url, config.verbosity);
-          redirect_url = "";
+      if (!finish && (poll_descriptors[RADIO_POLL_IDX].revents &
+                      (POLLIN | POLLERR | POLLHUP))) {
+        if (poll_descriptors[RADIO_POLL_IDX].revents & POLLERR) {
+          error(config.verbosity, "Socket error, reconnecting...");
           reconnect();
           send_request();
           poll_descriptors[RADIO_POLL_IDX].fd = socket_fd;
-
           last_radio_data_time = std::chrono::steady_clock::now();
+        } else {
+          last_radio_data_time = std::chrono::steady_clock::now();
+
+          handle_radio_data();
+          if (current_state == RadioState::REDIRECTING) {
+            log_info(config.verbosity, 4, "Got redirected to the adress: %s\n",
+                     redirect_url.c_str());
+            config.url = parse_url(redirect_url, config.verbosity);
+            redirect_url = "";
+            reconnect();
+            send_request();
+            poll_descriptors[RADIO_POLL_IDX].fd = socket_fd;
+
+            last_radio_data_time = std::chrono::steady_clock::now();
+          }
         }
       }
       if (!finish && (poll_descriptors[USER_INPUT_POLL_IDX].revents & POLLIN)) {
         handle_user_input();
       }
     } else if (poll_status == 0) {
-      log_info(config.verbosity, 1,
-               "Time limit exceeded, trying to reconnect...\n");
+      log_info(config.verbosity, 1, "data receiving timeout\n");
       reconnect();
       send_request();
       poll_descriptors[RADIO_POLL_IDX].fd = socket_fd;
@@ -105,15 +115,11 @@ void SikClient::run() {
   } while (!finish);
 
   // Write what is left in buffer (graceful shutdown).
-  // TODO: is ignoring metadata here okay?
-  while (buffer.size_readable() > 0) {
-    uint8_t temp[TEMP_BUFFER_SIZE];
-    size_t read_bytes = buffer.read(temp, sizeof(temp));
-    writen(STDOUT_FILENO, temp, read_bytes);
-  }
+  process_buffer();
 
   if (poll_descriptors[RADIO_POLL_IDX].fd >= 0) {
     close(poll_descriptors[RADIO_POLL_IDX].fd);
+    socket_fd = -1;
   }
 }
 
@@ -131,7 +137,6 @@ void SikClient::reconnect() {
   clear_buffer_and_state();
 
   connect_to_server(config.url.host, config.url.port, config.ip_version);
-  send_request();
 }
 
 void SikClient::clear_buffer_and_state() {
@@ -165,6 +170,14 @@ void SikClient::handle_radio_data() {
     size_t space_left = buffer.size_writeable();
 
     size_t bytes_to_read = std::min(sizeof(temp_buff), space_left);
+
+    if (bytes_to_read == 0) {
+      // Buffer is full. `process_buffer` was already called after the last
+      // write and couldn't extractd data (e.g. waiting for more datat to
+      // complete metadata block for ssl connections). Return and wait for
+      // the next POLLIN event. `extract_music` will drain buffer.
+      return;
+    }
 
     ssize_t received = read_data(temp_buff, bytes_to_read);
 
@@ -221,6 +234,8 @@ void SikClient::process_buffer() {
       case RadioState::READING_METADATA:
         state_changed_or_data_consumed = extract_metadata();
         break;
+      default:
+        break;
     }
   }
 }
@@ -257,16 +272,19 @@ bool SikClient::process_headers() {
     std::string search_cookie = "set-cookie: ";
     if (lower_line.find(search_cookie) == 0) {
       std::string cookie_val = line.substr(search_cookie.length());
-
-      size_t semicolon_pos = cookie_val.find(';');
-      if (semicolon_pos != std::string::npos) {
-        session_cookie = cookie_val.substr(0, semicolon_pos);
-      } else {
-        session_cookie = cookie_val;
+      if (!cookie_val.empty() && cookie_val.back() == '\r') {
+        cookie_val.pop_back();
       }
 
-      if (!session_cookie.empty() && session_cookie.back() == '\r') {
-        session_cookie.pop_back();
+      // Get only name=value.
+      size_t semicolon_pos = cookie_val.find(';');
+      std::string name_value = (semicolon_pos != std::string::npos)
+                                   ? cookie_val.substr(0, semicolon_pos)
+                                   : cookie_val;
+
+      size_t eq_pos = name_value.find('=');
+      if (eq_pos != std::string::npos) {
+        cookies[name_value.substr(0, eq_pos)] = name_value.substr(eq_pos + 1);
       }
     }
 
@@ -276,7 +294,13 @@ bool SikClient::process_headers() {
     if (pos != std::string::npos) {
       std::string value_str = line.substr(pos + search_key.length());
 
-      icy_metaint = std::stoull(value_str);
+      try {
+        icy_metaint = static_cast<size_t>(std::stoull(value_str));
+      } catch (const std::exception &) {
+        error(config.verbosity,
+              "Invalid icy-metaint value, disabling multiplexing");
+        icy_metaint = 0;
+      }
     }
   }
 
@@ -358,7 +382,6 @@ bool SikClient::extract_metadata() {
   return true;
 }
 
-// TODO: refactor to make this shorter.
 void SikClient::connect_to_server(const std::string &host, uint16_t port,
                                   IpVersion ip_version) {
   if (config.verbosity >= 1) {
@@ -421,6 +444,7 @@ void SikClient::connect_to_server(const std::string &host, uint16_t port,
     error(config.verbosity,
           "Failed to connect to one of the resolved addresses");
     close(socket_fd);
+    socket_fd = -1;
   }
 
   freeaddrinfo(result);
@@ -447,8 +471,16 @@ void SikClient::send_request() {
   request += "Host: " + config.url.host + "\r\n";
   request += "Connection: Keep-Alive\r\n";
 
-  if (!session_cookie.empty()) {
-    request += "Cookie: " + session_cookie + "\r\n";
+  if (!cookies.empty()) {
+    request += "Cookie: ";
+    bool first = true;
+    for (const auto &[name, value] : cookies) {
+      if (!first)
+        request += "; ";
+      request += name + "=" + value;
+      first = false;
+    }
+    request += "\r\n";
   }
 
   if (config.multiplexing) {
@@ -459,7 +491,7 @@ void SikClient::send_request() {
   ssize_t written_length = write_data(request);
   if (written_length < 0) {
     syserr(config.verbosity, "written");
-  } else if (written_length != request.size()) {
+  } else if (static_cast<size_t>(written_length) != request.size()) {
     fatal(config.verbosity, "incomplete writen");
   }
   log_info(config.verbosity, 1, "%s", request.c_str());
