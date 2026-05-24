@@ -57,7 +57,7 @@ private:
   // depending on the state in which the buffer is. `process_buffer` acts as 
   // a disposer for following functions. Program stays in this `process_buffer`
   // loop until the whole buffer is processed or the buffer state has changed.
-  // `true` represents fulfilment of the above condition.
+  // `true` represents fulfilment of at least one of the above condition.
   void process_buffer();
   bool process_headers();
   bool extract_music();
@@ -77,6 +77,8 @@ private:
   int socket_fd;
   CircularBuffer buffer;
 
+  std::string stdin_buffer; // For reading things like "qui" + "t\n".
+
   volatile sig_atomic_t finish; // Flag for graceful shutdown.
  
   RadioState current_state = RadioState::READING_HEADERS; // Buffer state.
@@ -87,8 +89,13 @@ private:
   SSL_CTX *ctx = nullptr;
   SSL *ssl = nullptr;
 
+
+  // Http parsing.
   std::string redirect_url = "";
   std::map<std::string, std::string> cookies;
+
+  bool http_status_parsed = false;
+  bool http_is_redirect = false;
 };
 
 #endif

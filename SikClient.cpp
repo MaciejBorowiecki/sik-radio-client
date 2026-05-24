@@ -84,13 +84,7 @@ void SikClient::run() {
       if (!finish && (poll_descriptors[RADIO_POLL_IDX].revents &
                       (POLLIN | POLLERR | POLLHUP))) {
         if (poll_descriptors[RADIO_POLL_IDX].revents & POLLERR) {
-          error(config.verbosity, "Socket error, reconnecting...");
-          config.url = original_url;
-          cookies.clear();
-          reconnect();
-          send_request();
-          poll_descriptors[RADIO_POLL_IDX].fd = socket_fd;
-          last_radio_data_time = std::chrono::steady_clock::now();
+          syserr(config.verbosity, "Socket error on radio connection");
         } else {
           last_radio_data_time = std::chrono::steady_clock::now();
 
@@ -156,6 +150,9 @@ void SikClient::clear_buffer_and_state() {
   bytes_until_meta = 0;
   current_metadata_length = 0;
   icy_metaint = 0;
+  http_status_parsed = false;
+  http_is_redirect = false;
+  redirect_url = "";
 }
 
 ssize_t SikClient::read_data(void *buf, size_t len) {
@@ -187,6 +184,9 @@ void SikClient::handle_radio_data() {
       // write and couldn't extractd data (e.g. waiting for more datat to
       // complete metadata block for ssl connections). Return and wait for
       // the next POLLIN event. `extract_music` will drain buffer.
+      if (current_state == RadioState::READING_HEADERS) {
+        fatal(config.verbosity, "Response header line too long");
+      }
       return;
     }
 
@@ -195,13 +195,16 @@ void SikClient::handle_radio_data() {
     if (received < 0) {
       syserr(config.verbosity, "read error from radio");
     } else if (received == 0) {
-      log_info(config.verbosity, 1, "Server closed the connection.\n");
-      // Server closed the connection.
-      finish = 1;
+      if (current_state == RadioState::PLAYING_MUSIC ||
+          current_state == RadioState::READING_METADATA_LENGTH ||
+          current_state == RadioState::READING_METADATA) {
+        log_info(config.verbosity, 1, "Server closed the connection.\n");
+        finish = 1;
+      } else {
+        fatal(config.verbosity,
+              "Server closed connection before headers were complete");
+      }
       return;
-    } else {
-      log_info(config.verbosity, 4, "Read %zd bytes from the socket.\n",
-               received);
     }
 
     buffer.write(temp_buff, received);
@@ -217,7 +220,6 @@ bool SikClient::handle_user_input() {
     return false; // Stop monitoring on EOF
   }
 
-  std::string stdin_buffer;
   if (received > 0) {
     stdin_buffer.append(temp_buff, received);
     if (stdin_buffer.find("quit\n") != std::string::npos) {
@@ -257,15 +259,13 @@ void SikClient::process_buffer() {
 
 bool SikClient::process_headers() {
   std::string line;
-  bool status_parsed = false;
-  bool is_redirect = false;
 
   while (buffer.read_line(line)) {
     log_info(config.verbosity, 1, "%s\n", line.c_str());
 
     // Empty line - end of headers.
     if (line == "\r" || line == "") {
-      if (is_redirect) {
+      if (http_is_redirect) {
         if (redirect_url.empty()) {
           fatal(config.verbosity, "Redirect without Location header");
         }
@@ -276,9 +276,9 @@ bool SikClient::process_headers() {
       }
       return true;
     }
-    if (!status_parsed) {
+    if (!http_status_parsed) {
       // Parse http code from the first line.
-      status_parsed = true;
+      http_status_parsed = true;
       size_t sp = line.find(' ');
       if (sp == std::string::npos) {
         fatal(config.verbosity, "Invalid HTTP response");
@@ -290,10 +290,10 @@ bool SikClient::process_headers() {
         fatal(config.verbosity, "Invalid HTTP status code");
       }
       if (status == HTTP_STATUS_SUCCESS) {
-        is_redirect = false;
+        http_is_redirect = false;
       } else if (status >= HTTP_STATUS_REDIRECT_MIN &&
                  status < HTTP_STATUS_REDIRECT_MAX) {
-        is_redirect = true;
+        http_is_redirect = true;
       } else {
         fatal(config.verbosity, "Server returned error status: %d", status);
       }
@@ -462,6 +462,8 @@ void SikClient::connect_to_server(const std::string &host, uint16_t port,
   struct addrinfo *result, *rp;
   std::string port_str = std::to_string(port);
   std::string resolved_host = host;
+
+  // IpV6 clear brackets.
   if (!host.empty() && host.front() == '[' && host.back() == ']') {
     resolved_host = host.substr(1, host.size() - 2);
   }

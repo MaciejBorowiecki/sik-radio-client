@@ -24,7 +24,7 @@ ClientConfig handle_arguments(int argc, char *argv[]) {
   const char *url_arg = nullptr;
   const char *timeout_arg = nullptr;
   const char *verbosity_arg = nullptr;
-  bool q_was_last = false;
+  bool q_was_last = false; // In case if both v and q are non empty.
 
   while ((opt = getopt(argc, argv, "u:mt:46v:q")) != -1) {
     switch (opt) {
