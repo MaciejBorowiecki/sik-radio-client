@@ -41,6 +41,8 @@ SikClient::~SikClient() {
 }
 
 void SikClient::run() {
+  const ParsedUrl original_url = config.url; // Redirect to original url.
+
   connect_to_server(config.url.host, config.url.port, config.ip_version);
   send_request();
   struct pollfd poll_descriptors[CONNECTIONS];
@@ -80,6 +82,8 @@ void SikClient::run() {
                       (POLLIN | POLLERR | POLLHUP))) {
         if (poll_descriptors[RADIO_POLL_IDX].revents & POLLERR) {
           error(config.verbosity, "Socket error, reconnecting...");
+          config.url = original_url;
+          cookies.clear();
           reconnect();
           send_request();
           poll_descriptors[RADIO_POLL_IDX].fd = socket_fd;
@@ -102,10 +106,14 @@ void SikClient::run() {
         }
       }
       if (!finish && (poll_descriptors[USER_INPUT_POLL_IDX].revents & POLLIN)) {
-        handle_user_input();
+        if (!handle_user_input()) {
+          poll_descriptors[USER_INPUT_POLL_IDX].fd = -1;
+        }
       }
     } else if (poll_status == 0) {
       log_info(config.verbosity, 1, "data receiving timeout\n");
+      config.url = original_url;
+      cookies.clear();
       reconnect();
       send_request();
       poll_descriptors[RADIO_POLL_IDX].fd = socket_fd;
@@ -199,20 +207,24 @@ void SikClient::handle_radio_data() {
   } while (config.url.is_ssl && SSL_pending(ssl) > 0);
 }
 
-void SikClient::handle_user_input() {
+bool SikClient::handle_user_input() {
   char temp_buff[TEMP_BUFFER_SIZE];
-
-  // Leave one character for end of string ('\0').
   ssize_t received = read(STDIN_FILENO, temp_buff, sizeof(temp_buff) - 1);
+  if (received == 0) {
+    return false; // Stop monitoring on EOF
+  }
 
+  std::string stdin_buffer;
   if (received > 0) {
-    temp_buff[received] = '\0';
-
-    std::string input(temp_buff);
-    if (input == "quit\n" || input == "quit\r\n") {
+    stdin_buffer.append(temp_buff, received);
+    if (stdin_buffer.find("quit\n") != std::string::npos) {
       finish = 1;
     }
+    if (stdin_buffer.size() > 4096) {
+      stdin_buffer.erase(0, stdin_buffer.size() - 5);
+    }
   }
+  return true;
 }
 
 void SikClient::process_buffer() {

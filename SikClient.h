@@ -51,7 +51,7 @@ private:
   // Following two functions are responsible for handling information from the
   // server (radio) and user (user input) respectively.
   void handle_radio_data();
-  void handle_user_input();
+  bool handle_user_input();
 
   // Following five functions are responsible for handling data in the buffer
   // depending on the state in which the buffer is. `process_buffer` acts as 
